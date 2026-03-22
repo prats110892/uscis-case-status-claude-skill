@@ -1,47 +1,49 @@
-# I built a Claude Code skill that checks any USCIS case status -- one command, plain-English explanation
+# I built a Claude Code skill that checks your USCIS case status automatically
 
-Tired of logging in, doing 2FA, and clicking around just to stare at a status you don't fully understand. Built a skill for Claude Code that does it in one command and actually tells you what's happening.
+Tired of logging into myaccount.uscis.gov, doing 2FA, clicking around, and still not knowing what any of it means. So I built a Claude Code skill that handles the whole thing with one command.
 
 ---
 
-## What you get
+## What it does
 
-Type `/uscis-case-status` in Claude Code and it:
-- Logs into myaccount.uscis.gov automatically
-- Reads the SMS verification code from Mac Messages -- you don't touch anything
-- Fetches your case data from the USCIS API
-- Claude explains what it all means: current stage, what happened, what's next, whether anything is stuck or requires action from you
+Type `/uscis-case-status` and Claude will:
+- Log into myaccount.uscis.gov on your behalf
+- Read the SMS verification code from Mac Messages automatically -- you don't touch anything
+- Pull your case data from the USCIS API
+- Explain what it all means in plain English: current stage, recent events, what's next, whether anything is stuck or needs your attention
 
 Works for any receipt number -- I-485, I-130, I-765, I-131, I-90, N-400, EAD, whatever you're tracking.
 
-Total time: ~20 seconds.
+Takes about 20 seconds start to finish.
 
 ---
 
-## Setup (one time)
+## How to set it up
 
-**Requirements:** macOS, Python 3, [Claude Code](https://claude.ai/download)
+**You'll need:** macOS, Python 3, and [Claude Code](https://claude.ai/download)
 
-1. Download the files from [link]
-2. Open your terminal, navigate to your Claude Code project folder
+1. Clone or download the repo: https://github.com/prats110892/uscis-case-status-claude-skill
+2. Open Terminal, navigate to your Claude Code project folder
 3. Run:
 ```bash
-python3 setup.py
+python3 /path/to/setup.py
 ```
-4. Follow the prompts -- it asks for your USCIS email, password, and receipt number, then handles everything else automatically
+4. It'll ask for your USCIS email, password, and receipt number -- that's it. Everything else is automatic.
 
-After that, just open Claude Code and type `/uscis-case-status`.
+After that, open Claude Code and type `/uscis-case-status`.
 
----
-
-## How it works (for the curious)
-
-USCIS blocks plain API calls with an AWS WAF JavaScript challenge. The script spins up a headless (invisible) browser for ~3 seconds just to solve that, grabs the auth cookie, then closes it. Everything else -- login, OTP, fetching the case -- is direct API calls.
-
-The auth also bridges two separate USCIS systems (`myaccount.uscis.gov` handles login, `my.uscis.gov` has the actual case data) via a SAML redirect that the script handles automatically.
-
-Your credentials stay in a local `.env` file and never leave your machine.
+To uninstall, run `bash uninstall.sh` from the same folder.
 
 ---
 
-Let me know if you run into issues. Happy to help debug.
+## How it actually works
+
+USCIS blocks plain HTTP clients with an AWS WAF JavaScript challenge. The script opens a headless (invisible) browser for about 3 seconds just to solve that challenge, grabs the auth cookie, then immediately closes. Everything else -- the login, the SMS code, fetching the case data -- is direct API calls, no browser involved.
+
+There's also a quirk where USCIS uses two separate systems: `myaccount.uscis.gov` handles authentication and `my.uscis.gov` has the actual case data. They're linked via a SAML redirect that the script handles automatically.
+
+Your credentials are saved in a local `.env` file and never leave your machine.
+
+---
+
+Happy to answer questions or help debug if something doesn't work for your setup.

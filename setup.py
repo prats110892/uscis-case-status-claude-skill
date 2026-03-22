@@ -45,9 +45,15 @@ def main():
 
     # ── Step 1: Dependencies ──────────────────────────────────────────────────
     section("Step 1/4: Installing dependencies")
-    run(f"{sys.executable} -m pip install requests python-dotenv playwright -q",
+
+    venv_dir = project_root / ".venv"
+    if not venv_dir.exists():
+        run(f"{sys.executable} -m venv {venv_dir}", "Creating virtual environment")
+
+    venv_python = venv_dir / "bin" / "python3"
+    run(f"{venv_python} -m pip install requests python-dotenv playwright -q",
         "Installing Python packages")
-    run(f"{sys.executable} -m playwright install chromium",
+    run(f"{venv_python} -m playwright install chromium",
         "Downloading headless browser (one-time, ~150MB)")
 
     # ── Step 2: Credentials ───────────────────────────────────────────────────
@@ -146,16 +152,21 @@ fetches your case data, and returns it for interpretation.
 ## Run it
 
 ```bash
-cd "{project_root}" && python3 scripts/uscis_check.py
+cd "{project_root}" && .venv/bin/python3 scripts/uscis_check.py
 ```
 
-After the script completes, give a plain-English explanation:
-- What the current status means in human terms
+After the script completes, check these fields in the JSON first:
+- `closed` = true → lead with "This case is closed/complete" before anything else
+- `areAllGroupStatusesComplete` = true → case is fully adjudicated
+- `actionRequired` = true → flag this prominently at the top
+- Any APRD event → approved. Any DNID event → denied.
+
+Then give a plain-English explanation:
+- Current status (closed/approved/pending/denied -- not just event codes)
 - When it was last updated
-- What each event means (translate codes: FTA0 = biometrics done, IAF = filing accepted, RFE = evidence requested, APRD = approved, INTV = interview scheduled)
+- Events in order with plain-English meaning (IAF = filing accepted, FTA0 = biometrics done, SA = sent to adjudicator, APRD = approved, DNID = denied, RFE = evidence requested, INTV = interview scheduled)
 - Whether any action is required from the user
-- What typically happens next at this stage, and roughly how long it takes
-- If the case looks stuck, say so clearly and what options exist (e.g. making an InfoPass appointment, filing a case inquiry)
+- If still pending: what typically comes next and whether the timeline looks normal or stuck
 
 If the script fails or exits with an error, diagnose and suggest a fix.
 """

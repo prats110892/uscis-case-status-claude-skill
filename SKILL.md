@@ -20,13 +20,19 @@ Runs a Python script that:
 python3 /path/to/uscis_check.py
 ```
 
-After the script completes, give a plain-English summary:
-- Current status and what it means for this specific form type
+After the script completes, give a plain-English summary. Start by checking these fields in the JSON first:
+- `closed` = true → lead with "This case is closed/complete" before anything else
+- `areAllGroupStatusesComplete` = true → case is fully adjudicated
+- `actionRequired` = true → flag this prominently at the top
+- Any APRD event → case was approved
+- Any DNID event → case was denied
+
+Then cover:
+- Current status in plain English (closed/approved/pending/denied, not just event codes)
 - When it was last updated
-- Most recent events in plain English (not just codes)
-- Whether anything is required from the user
-- What the next expected step typically is for this form type and stage
-- If the case appears stuck, how long is normal to wait at this stage
+- Events in chronological order with plain-English meaning (IAF = filing accepted, FTA0 = biometrics done, APRD = approved, DNID = denied, RFE = evidence requested, INTV = interview scheduled, SA = sent to adjudicator)
+- Whether any action is required from the user
+- If still pending: what typically happens next and whether the timeline looks normal or stuck
 
 If the script fails, diagnose and suggest a fix.
 
