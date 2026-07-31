@@ -21,13 +21,21 @@ from pathlib import Path
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def run(cmd, description):
+def run(cmd, description, stream=False):
+    """Run a shell command. stream=True shows live output for slow steps."""
     print(f"  {description}...")
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"  ✗ Failed: {result.stderr.strip()}")
-        sys.exit(1)
-    print(f"  ✓ Done")
+    if stream:
+        # Long downloads need visible progress or the installer looks hung.
+        result = subprocess.run(cmd, shell=True, text=True)
+        if result.returncode != 0:
+            print(f"  ✗ Failed (exit {result.returncode})")
+            sys.exit(1)
+    else:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  ✗ Failed: {result.stderr.strip()}")
+            sys.exit(1)
+    print("  ✓ Done")
 
 def section(title):
     print(f"\n{'─' * 50}")
@@ -54,7 +62,8 @@ def main():
     run(f"{venv_python} -m pip install requests python-dotenv playwright -q",
         "Installing Python packages")
     run(f"{venv_python} -m playwright install chromium",
-        "Downloading headless browser (one-time, ~150MB)")
+        "Downloading headless browser (one-time, ~150MB -- this takes a minute)",
+        stream=True)
 
     # ── Step 2: Credentials ───────────────────────────────────────────────────
     section("Step 2/4: Your USCIS account")
@@ -97,12 +106,16 @@ USCIS_RECEIPT_NUMBER={receipt}
 """
     env_path.write_text(new_content.lstrip())
 
-    # Add .env to .gitignore if a .gitignore exists
+    # Make sure .env can never be committed. Create .gitignore if absent --
+    # a project without one is exactly where credentials get pushed by accident.
     gitignore = project_root / ".gitignore"
     if gitignore.exists():
         content = gitignore.read_text()
         if ".env" not in content:
             gitignore.write_text(content.rstrip() + "\n.env\n")
+    else:
+        gitignore.write_text(".env\n")
+        print("  ✓ Created .gitignore so .env is never committed")
 
     print(f"  ✓ Credentials saved to .env")
 
@@ -136,40 +149,28 @@ USCIS_RECEIPT_NUMBER={receipt}
     script_dst = scripts_dir / "uscis_check.py"
     script_dst.write_text(script_src.read_text())
 
-    # Write SKILL.md with the correct script path baked in
-    skill_md = f"""---
-name: uscis-case-status
-description: Check any USCIS case status -- auto-login, auto-OTP, plain-English explanation
-disable-model-invocation: false
-user-invocable: true
----
+    # Install SKILL.md from the file shipped alongside this installer, patching
+    # in the real run command for this machine.
+    #
+    # Do NOT inline a copy of the skill text here. SKILL.md on disk is the single
+    # source of truth for interpretation guidance -- duplicating it means the
+    # installer silently ships stale instructions.
+    skill_src = Path(__file__).parent / "SKILL.md"
+    if not skill_src.exists():
+        print("  ✗ SKILL.md not found next to setup.py.")
+        print("    Unzip the whole folder (not just setup.py) and rerun.")
+        sys.exit(1)
 
-## What this does
+    skill_md = skill_src.read_text()
 
-Runs a script that logs into USCIS, reads the SMS code from Mac Messages automatically,
-fetches your case data, and returns it for interpretation.
+    # Replace the placeholder run command with the venv-aware absolute one.
+    run_cmd = f'cd "{project_root}" && .venv/bin/python3 scripts/uscis_check.py'
+    if "python3 /path/to/uscis_check.py" in skill_md:
+        skill_md = skill_md.replace("python3 /path/to/uscis_check.py", run_cmd)
+    else:
+        print("  ! Could not find the run-command placeholder in SKILL.md.")
+        print(f"    Verify the skill runs: {run_cmd}")
 
-## Run it
-
-```bash
-cd "{project_root}" && .venv/bin/python3 scripts/uscis_check.py
-```
-
-After the script completes, check these fields in the JSON first:
-- `closed` = true → lead with "This case is closed/complete" before anything else
-- `areAllGroupStatusesComplete` = true → case is fully adjudicated
-- `actionRequired` = true → flag this prominently at the top
-- Any APRD event → approved. Any DNID event → denied.
-
-Then give a plain-English explanation:
-- Current status (closed/approved/pending/denied -- not just event codes)
-- When it was last updated
-- Events in order with plain-English meaning (IAF = filing accepted, FTA0 = biometrics done, SA = sent to adjudicator, APRD = approved, DNID = denied, RFE = evidence requested, INTV = interview scheduled)
-- Whether any action is required from the user
-- If still pending: what typically comes next and whether the timeline looks normal or stuck
-
-If the script fails or exits with an error, diagnose and suggest a fix.
-"""
     (skill_dir / "SKILL.md").write_text(skill_md)
 
     print(f"  ✓ Script installed at scripts/uscis_check.py")

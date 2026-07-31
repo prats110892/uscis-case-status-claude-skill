@@ -124,15 +124,78 @@ def read_otp_from_messages(max_age_seconds=120):
 # Output formatting
 # ---------------------------------------------------------------------------
 
+# Event code -> plain English.
+#
+# Confidence differs per code. Do not treat this map as gospel:
+#   [verified] observed directly on a real case and cross-checked against the portal
+#   [indexed]  from a public ELIS code index; individually plausible
+#   [family]   the index groups these without per-code glosses -- the FAMILY is
+#              right, the individual meaning is a best guess
+#
+# The case-service JSON has NO plain-English status field. The authoritative
+# status string exists only on the my.uscis.gov web page. These codes are the
+# best signal the API gives you.
 EVENT_CODES = {
-    "IAF":  "Initial filing accepted",
-    "FTA0": "Biometrics appointment completed",
-    "RFE":  "Request for Evidence issued",
-    "RFES": "Response to RFE received",
-    "APRD": "Approved",
-    "DNID": "Denied",
-    "INTV": "Interview scheduled",
+    # Receipt / intake
+    "H001":  ("Case created", "indexed"),
+    "IAF":   ("Receipt letter emailed", "indexed"),
+    "IAA":   ("Receipt notice sent", "indexed"),
+    # Background checks / processing
+    "FSA0":  ("Database checks requested", "indexed"),
+    "FTA0":  ("Database checks received", "indexed"),
+    "FT0":   ("Officer processing begun", "indexed"),
+    # Biometrics
+    "FNA":   ("Fingerprint appointment notice ordered", "indexed"),
+    "IMAF":  ("Fingerprint appointment notice sent", "indexed"),
+    "FNB":   ("Fingerprints taken", "indexed"),
+    "FNG":   ("Fingerprint processing complete - match found", "indexed"),
+    "FNH":   ("Fingerprint processing complete - no match found", "indexed"),
+    "MA70":  ("Biometrics received from ASC", "indexed"),
+    # Approval
+    #
+    # H008 is the important one. A widely-cited code index glosses H008 as
+    # "Biometrics Reused". That is misleading. On a real I-485 in July 2026,
+    # two H008 events posted and the my.uscis.gov portal read "Case Approved"
+    # the same day. Treat H008 as an APPROVAL signal.
+    "H008":  ("APPROVED", "verified"),
+    "DA":    ("Approved", "family"),
+    "DB":    ("Approved", "family"),
+    "IEA":   ("Approved", "family"),
+    "IEE":   ("Approved", "family"),
+    "IEC":   ("Approved", "family"),
+    "APRD":  ("Approved", "family"),
+    # Card production
+    "LDA":   ("Card produced", "verified"),
+    "LAA":   ("Card production", "family"),
+    "LBA":   ("Card production", "family"),
+    "LEA":   ("Card production", "family"),
+    "LFA":   ("Card production", "family"),
+    # RFE / denial
+    "RFE":   ("Request for Evidence issued", "indexed"),
+    "RFES":  ("Response to RFE received", "indexed"),
+    "DNID":  ("Denied", "indexed"),
+    "FBA":   ("RFE or denial", "family"),
+    "IK":    ("RFE or denial", "family"),
+    "II":    ("RFE or denial", "family"),
+    "EA":    ("RFE or denial", "family"),
+    "IFA":   ("RFE or denial", "family"),
+    # Interview / transfer / hold
+    "INTV":  ("Interview scheduled", "indexed"),
+    "BC":    ("Transfer or hold", "family"),
+    "BA":    ("Transfer or hold", "family"),
+    "FS":    ("Transfer or hold", "family"),
+    "FR":    ("Transfer or hold", "family"),
+    "KH":    ("Transfer or hold", "family"),
 }
+
+APPROVAL_CODES = {"H008", "DA", "DB", "IEA", "IEE", "IEC", "APRD"}
+CARD_CODES     = {"LDA", "LAA", "LBA", "LEA", "LFA"}
+BAD_CODES      = {"RFE", "DNID", "FBA", "IK", "II", "EA", "IFA"}
+
+
+def decode(code):
+    meaning, confidence = EVENT_CODES.get(code, (f"{code} (unrecognized code)", "unknown"))
+    return meaning if confidence == "verified" else f"{meaning}  [{confidence}]"
 
 def format_output(data):
     case = data.get("data", data)
@@ -143,10 +206,32 @@ def format_output(data):
         "=" * 55,
     ]
 
+    events = case.get("events", [])
+    codes  = [e.get("eventCode") for e in events if isinstance(e, dict)]
+
+    # There is no status field in this API. Derive a headline from event codes.
+    if any(c in CARD_CODES for c in codes):
+        headline = "APPROVED - card produced"
+    elif any(c in APPROVAL_CODES for c in codes):
+        headline = "APPROVED"
+    elif any(c in BAD_CODES for c in codes):
+        headline = "RFE / denial event present - read events below"
+    elif case.get("closed"):
+        headline = "Closed"
+    else:
+        headline = "Pending"
+
+    lines.append(f"Status:       {headline}")
+    lines.append("              ^ derived from event codes. The API returns no")
+    lines.append("                status field -- confirm on my.uscis.gov, the")
+    lines.append("                portal string is the authoritative one.")
+    lines.append("")
     lines.append(f"Filed:        {case.get('submissionDate', 'N/A')}")
     lines.append(f"Last updated: {case.get('updatedAt', 'N/A')}")
-    lines.append(f"Action required: {'YES' if case.get('actionRequired') else 'No'}")
-    lines.append(f"All stages complete: {'Yes' if case.get('areAllGroupStatusesComplete') else 'No'}")
+    lines.append(f"Closed flag:  {'Yes' if case.get('closed') else 'No'}  (lags approval by days -- not reliable)")
+    if case.get("actionRequired"):
+        lines.append("")
+        lines.append("  *** ACTION REQUIRED on this case ***")
 
     notices = case.get("notices", [])
     if notices:
@@ -160,14 +245,17 @@ def format_output(data):
         for e in evidence:
             lines.append(f"  {e}")
 
-    events = case.get("events", [])
     if events:
         lines.append(f"\nEvents ({len(events)}, most recent first):")
-        for evt in sorted(events, key=lambda x: x.get("eventTimestamp", ""), reverse=True):
-            code = evt.get("eventCode", "")
-            desc = EVENT_CODES.get(code, code)
-            date = evt.get("eventDateTime", "")
-            lines.append(f"  {date}  {desc}")
+        lines.append("  posted      dated       meaning")
+        for evt in sorted(events, key=lambda x: x.get("createdAtTimestamp", ""), reverse=True):
+            code   = evt.get("eventCode", "")
+            posted = (evt.get("createdAt") or "")[:10]
+            dated  = (evt.get("eventDateTime") or "")[:10]
+            # Events are often backdated. "posted" is when USCIS wrote the row,
+            # which is what actually tells you when something happened.
+            flag = " (backdated)" if dated and posted and dated < posted else ""
+            lines.append(f"  {posted:<11} {dated:<11} {code:<6} {decode(code)}{flag}")
 
     lines.append("\n--- Full JSON ---")
     lines.append(json.dumps(data, indent=2))
